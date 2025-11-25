@@ -2,7 +2,9 @@ import streamlit as st
 import sys
 import os
 import copy
+import requests
 from decimal import Decimal
+from streamlit_autorefresh import st_autorefresh
 
 # Add tests/utils directory to path to allow importing simulator
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -29,7 +31,37 @@ def get_trade_preview(trader, dx, i, j):
     except Exception:
         return None
 
+# --- FX API Fetcher ---
+@st.cache_data(ttl=60)
+def fetch_eur_price():
+    """
+    Fetches the EUR rate (USD base) from ForexRateAPI.
+    Refreshes every 60 seconds.
+    """
+    url = "https://api.forexrateapi.com/v1/latest"
+    params = {
+        "api_key": "34ea334656de7713cd5384a5a7718ceb",
+        "base": "USD",
+        "currencies": "EUR"
+    }
+    try:
+        response = requests.get(url, params=params, timeout=5)
+        data = response.json()
+        if data.get("success"):
+            # Rate is EUR per 1 USD. e.g. 0.95
+            return data["rates"]["EUR"]
+        else:
+            st.error(f"API Error: {data.get('error')}")
+            return None
+    except Exception as e:
+        st.error(f"Network Error: {e}")
+        return None
+
 st.set_page_config(page_title="Stablecoin DEX Simulator", layout="wide")
+
+# Auto-refresh the page every 60 seconds to fetch new rates if needed
+# (Only works if user keeps tab open)
+st_autorefresh(interval=60000, limit=None, key="fx_refresh")
 
 # Custom CSS for the card look and input styling
 st.markdown("""
@@ -69,7 +101,7 @@ if page == "Documentation":
     st.title("📚 Simulator Documentation")
     st.markdown("""
     ## Introduction
-    This simulator is built upon the **Curve Twocrypto-ng** mathematical model. It demonstrates how a specialized decentralized exchange (DEX) functions for pairs of assets with variable prices, such as **USD** and **KRW**.
+    This simulator is built upon the **Curve Twocrypto-ng** mathematical model. It demonstrates how a specialized decentralized exchange (DEX) functions for pairs of assets with variable prices, such as **USD** and **EUR**.
 
     Unlike standard constant product pools (Uniswap V2), this model concentrates liquidity around the current "Oracle Price" to provide better exchange rates with lower slippage, similar to how order books work on centralized exchanges, but fully automated.
 
@@ -103,19 +135,19 @@ if page == "Documentation":
 
     ### Step 1: Initialize the Pool
     1.  Go to the **Sidebar**.
-    2.  Set the **Initial Price** (e.g., 1350 KRW = 1 USD).
+    2.  Set the **Initial Price**. The default is fetched from a real-time FX API.
     3.  Set the **Total Liquidity** (e.g., $1,000,000 USD worth of tokens).
     4.  Click **Initialize / Reset Pool**.
 
     ### Step 2: Check Status
     Look at the **Pool Status** section to see:
-    *   **Pool KRW Liquidity:** How much Won is in the reserves.
+    *   **Pool EUR Liquidity:** How much Euro is in the reserves.
     *   **Pool USD Liquidity:** How much Dollar is in the reserves.
     *   **Oracle Price:** The current internal exchange rate.
 
     ### Step 3: Perform Swaps
-    *   **Buy KRW:** Enter the amount of USD you want to sell. Click "Sell USD".
-    *   **Buy USD:** Enter the amount of KRW you want to sell. Click "Sell KRW".
+    *   **Buy EUR:** Enter the amount of USD you want to sell. Click "Swap".
+    *   **Buy USD:** Enter the amount of EUR you want to sell. Click "Swap".
     
     Observe how the **Oracle Price** shifts slightly after large trades, and how the **Liquidity** balances change. If you trade enough to push the ratio far from the center, you will see the exchange rate worsen (slippage).
 
@@ -127,8 +159,16 @@ if page == "Documentation":
     """)
 
 elif page == "Simulator":
-    st.title("💱 Twocrypto-ng Simulator: USD/KRW")
-    st.markdown("Simulate a decentralized exchange liquidity pool between **KRW** (Korean Won) and **USD** (US Dollar).")
+    st.title("💱 Twocrypto-ng Simulator: USD/EUR")
+    st.markdown("Simulate a decentralized exchange liquidity pool between **EUR** (Euro) and **USD** (US Dollar).")
+
+    # Fetch Live Rate
+    live_rate = fetch_eur_price()
+    if live_rate:
+        st.success(f"🟢 Live FX Rate Connected: 1 USD = €{live_rate:.4f} EUR")
+    else:
+        st.warning("🔴 Live FX Rate Unavailable. Using fallback default (0.95).")
+        live_rate = 0.95
 
     # --- Sidebar: Configuration ---
     st.sidebar.header("1. Pool Configuration")
@@ -140,7 +180,7 @@ elif page == "Simulator":
     default_out_fee = 0.0045 # 0.45%
 
     # Initial defaults
-    default_peg = 1350.0 # 1 USD = 1350 KRW
+    default_peg = live_rate # 1 USD = ~0.95 EUR
     default_liquidity = 1000000 # 1 Million USD total
 
     # Inputs
@@ -151,18 +191,33 @@ elif page == "Simulator":
         out_fee = st.number_input("Out Fee", value=default_out_fee, format="%.6f")
 
     st.sidebar.subheader("Market Parameters")
-    price_peg = st.sidebar.number_input("Initial Price (KRW per USD)", value=default_peg)
+    # We use 1 USD = X EUR.
+    # If price_peg = 0.95, then 1 USD buys 0.95 EUR.
+    # Curve Logic: Coin 0 = Base, Coin 1 = Quote.
+    # If we set Coin 0 = EUR, Coin 1 = USD.
+    # Price of Coin 1 (USD) in terms of Coin 0 (EUR).
+    # So if p = 0.95, then 1 USD = 0.95 EUR.
+    price_peg = st.sidebar.number_input("Initial Price (EUR per USD)", value=default_peg, format="%.4f")
     liquidity_usd = st.sidebar.number_input("Total Liquidity ($ Value)", value=default_liquidity)
 
     if st.sidebar.button("Initialize / Reset Pool", type="primary"):
-        D_krw = int(liquidity_usd * price_peg * 10**18)
+        # Coin 0 = EUR (Base, price=1 relative to itself)
+        # Coin 1 = USD (Price = 0.95 relative to EUR)
+        # D (Invariant) is calculated in EUR units usually, but let's approximate.
+        # If total liquidity is $1M USD worth.
+        # That is $500k USD + $500k worth of EUR.
+        # $500k USD = 500,000 units.
+        # $500k worth of EUR = 500,000 * 0.95 = 475,000 units.
+        # Roughly D ~ Total Value in Coin 0 units.
+        
+        D_base = int(liquidity_usd * price_peg * 10**18) # Rough approximation for init
         p0 = [10**18, int(price_peg * 10**18)]
         
         try:
             trader = Trader(
                 A=int(A),
                 gamma=int(gamma),
-                D=D_krw,
+                D=D_base,
                 p0=p0,
                 mid_fee=mid_fee,
                 out_fee=out_fee
@@ -184,16 +239,19 @@ elif page == "Simulator":
         trader = st.session_state.trader
 
         # Calculate Balances & Price
-        bal_krw = Decimal(trader.curve.x[0]) / Decimal(10**18)
+        # Coin 0 = EUR, Coin 1 = USD
+        bal_eur = Decimal(trader.curve.x[0]) / Decimal(10**18)
         bal_usd = Decimal(trader.curve.x[1]) / Decimal(10**18)
-        current_price_krw = Decimal(trader.price_oracle[1]) / Decimal(10**18)
+        
+        # Price of Coin 1 (USD) in terms of Coin 0 (EUR)
+        current_price_eur = Decimal(trader.price_oracle[1]) / Decimal(10**18)
 
         # Display Metrics
         st.subheader("Pool Status")
         m1, m2, m3 = st.columns(3)
-        m1.metric("Pool KRW Liquidity", f"₩{bal_krw:,.0f}")
+        m1.metric("Pool EUR Liquidity", f"€{bal_eur:,.2f}")
         m2.metric("Pool USD Liquidity", f"${bal_usd:,.2f}")
-        m3.metric("Oracle Price (KRW/USD)", f"₩{current_price_krw:,.2f}")
+        m3.metric("Oracle Price (EUR/USD)", f"€{current_price_eur:,.4f}")
 
         st.divider()
 
@@ -206,13 +264,13 @@ elif page == "Simulator":
 
         def toggle_direction():
             if st.session_state.swap_from_token == "USD":
-                st.session_state.swap_from_token = "KRW"
+                st.session_state.swap_from_token = "EUR"
             else:
                 st.session_state.swap_from_token = "USD"
 
         # Determine Current Direction
         from_token = st.session_state.swap_from_token
-        to_token = "KRW" if from_token == "USD" else "USD"
+        to_token = "EUR" if from_token == "USD" else "USD"
         
         # Centered Card Layout
         col_spacer_left, col_card, col_spacer_right = st.columns([1, 2, 1])
@@ -226,22 +284,19 @@ elif page == "Simulator":
                 col_input_from, col_token_from = st.columns([3, 1])
                 
                 with col_input_from:
-                    # Clean input with no label (handled by custom header above)
                     amount_in = st.number_input(
                         "Amount In", 
                         min_value=0.0, 
                         value=0.0, 
-                        step=1.0 if from_token == "KRW" else 0.1,
+                        step=10.0 if from_token == "EUR" else 10.0,
                         label_visibility="collapsed",
                         key="input_amount"
                     )
                 
                 with col_token_from:
-                    # Static token display or selectbox (disabled for now as we only have 2)
                     st.selectbox("Token", [from_token], disabled=True, label_visibility="collapsed", key="token_in_select")
 
                 # --- SWITCH BUTTON ---
-                # Centered button to toggle direction
                 col_switch_left, col_switch_btn, col_switch_right = st.columns([4, 1, 4])
                 with col_switch_btn:
                     st.button("⬇", on_click=toggle_direction, help="Switch Tokens", use_container_width=True)
@@ -257,12 +312,12 @@ elif page == "Simulator":
                 
                 if amount_in > 0:
                     dx = int(Decimal(amount_in) * Decimal(10**18))
-                    # USD=1 (index 1), KRW=0 (index 0)
+                    # USD=1 (index 1), EUR=0 (index 0)
                     if from_token == "USD":
-                        # USD -> KRW: buy(dx, 1, 0)
+                        # USD -> EUR: buy(dx, 1, 0)
                         dy_int = get_trade_preview(trader, dx, 1, 0)
                     else:
-                        # KRW -> USD: buy(dx, 0, 1)
+                        # EUR -> USD: buy(dx, 0, 1)
                         dy_int = get_trade_preview(trader, dx, 0, 1)
                     
                     if dy_int:
@@ -271,24 +326,21 @@ elif page == "Simulator":
                         
                         # Calc stats
                         if preview_amount > 0:
-                            if from_token == "USD": # In USD, Out KRW
-                                effective_rate = preview_amount / amount_in # KRW per USD
-                            else: # In KRW, Out USD
-                                # Effective rate usually normalized to KRW/USD
-                                effective_rate = amount_in / preview_amount # KRW per USD
+                            if from_token == "USD": # In USD, Out EUR
+                                effective_rate = preview_amount / amount_in # EUR per USD
+                            else: # In EUR, Out USD
+                                effective_rate = amount_in / preview_amount # EUR per USD (normalized)
                                 
-                            oracle_rate = float(current_price_krw)
-                            # Price impact relative to oracle
-                            # If selling USD for KRW (getting less KRW than oracle says = negative impact)
-                            # Expected KRW = amount_in * oracle_rate
-                            # Actual KRW = preview_amount
+                            oracle_rate = float(current_price_eur)
                             
                             expected_out_oracle = 0
                             if from_token == "USD":
+                                # Sell USD for EUR
+                                # Expected EUR = amount_in * oracle_rate
                                 expected_out_oracle = amount_in * oracle_rate
                                 price_impact_pct = ((preview_amount - expected_out_oracle) / expected_out_oracle) * 100
                             else:
-                                # Selling KRW for USD. 
+                                # Sell EUR for USD
                                 # Expected USD = amount_in / oracle_rate
                                 expected_out_oracle = amount_in / oracle_rate
                                 price_impact_pct = ((preview_amount - expected_out_oracle) / expected_out_oracle) * 100
@@ -299,7 +351,7 @@ elif page == "Simulator":
                     st.number_input(
                         "Amount Out",
                         value=preview_amount,
-                        disabled=True, # Read-only
+                        disabled=True, 
                         label_visibility="collapsed",
                         key="output_amount"
                     )
@@ -313,7 +365,7 @@ elif page == "Simulator":
                     st.markdown(f"""
                     <div style="display: flex; justify-content: space-between; font-size: 0.9em; color: #555;">
                         <span>Price</span>
-                        <span>1 USD = {effective_rate:,.2f} KRW</span>
+                        <span>1 USD = €{effective_rate:,.4f} EUR</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; font-size: 0.9em; color: {('#d32f2f' if price_impact_pct < -0.1 else '#388e3c')};">
                         <span>Price Impact</span>
@@ -329,11 +381,11 @@ elif page == "Simulator":
                     result = None
                     
                     if from_token == "USD":
-                        result = trader.buy(dx, 1, 0) # Sell USD, Buy KRW
-                        msg = f"SELL ${amount_in:,.2f} USD -> BUY ₩{preview_amount:,.0f} KRW"
+                        result = trader.buy(dx, 1, 0) # Sell USD, Buy EUR
+                        msg = f"SELL ${amount_in:,.2f} USD -> BUY €{preview_amount:,.2f} EUR"
                     else:
-                        result = trader.buy(dx, 0, 1) # Sell KRW, Buy USD
-                        msg = f"SELL ₩{amount_in:,.0f} KRW -> BUY ${preview_amount:,.2f} USD"
+                        result = trader.buy(dx, 0, 1) # Sell EUR, Buy USD
+                        msg = f"SELL €{amount_in:,.2f} EUR -> BUY ${preview_amount:,.2f} USD"
                     
                     if result:
                         st.session_state.log.append(msg)
