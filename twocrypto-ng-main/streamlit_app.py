@@ -256,81 +256,95 @@ elif page == "Simulator":
 
     show_live_rate_widget()
 
-    # --- Sidebar: Configuration ---
-    st.sidebar.header("1. Pool Configuration")
+# --- Sidebar: Configuration ---
+st.sidebar.header("1. Pool Configuration")
 
-    # Defaults based on 'forex' preset in pool_presets.csv
-    default_A = 20000000
-    default_gamma = 1000000000000000 # 10^15 (0.001)
-    default_mid_fee = 0.0005 # 0.05%
-    default_out_fee = 0.0045 # 0.45%
+# Defaults based on 'forex' preset in pool_presets.csv
+default_A = 20000000
+default_gamma = 1000000000000000 # 10^15 (0.001)
+default_mid_fee = 0.0005 # 0.05%
+default_out_fee = 0.0045 # 0.45%
 
-    # Initial defaults
+# Initial defaults
     default_peg = global_live_rate if global_live_rate else 0.95
-    default_liquidity = 1000000 # 1 Million USD total
+default_liquidity = 1000000 # 1 Million USD total
 
-    # Inputs
-    with st.sidebar.expander("Advanced Parameters", expanded=False):
-        A = st.number_input("Amplification (A)", value=default_A)
-        gamma = st.number_input("Gamma (int)", value=default_gamma, help="Gamma parameter in 10^18 scale (e.g. 10^15 = 0.001)")
-        mid_fee = st.number_input("Mid Fee", value=default_mid_fee, format="%.6f")
-        out_fee = st.number_input("Out Fee", value=default_out_fee, format="%.6f")
+# Inputs
+with st.sidebar.expander("Advanced Parameters", expanded=False):
+    A = st.number_input("Amplification (A)", value=default_A)
+    gamma = st.number_input("Gamma (int)", value=default_gamma, help="Gamma parameter in 10^18 scale (e.g. 10^15 = 0.001)")
+    mid_fee = st.number_input("Mid Fee", value=default_mid_fee, format="%.6f")
+    out_fee = st.number_input("Out Fee", value=default_out_fee, format="%.6f")
 
-    st.sidebar.subheader("Market Parameters")
+st.sidebar.subheader("Market Parameters")
     # We use 1 USD = X EUR.
     price_peg = st.sidebar.number_input("Initial Price (EUR per USD)", value=default_peg, format="%.4f")
-    liquidity_usd = st.sidebar.number_input("Total Liquidity ($ Value)", value=default_liquidity)
+liquidity_usd = st.sidebar.number_input("Total Liquidity ($ Value)", value=default_liquidity)
 
-    if st.sidebar.button("Initialize / Reset Pool", type="primary"):
+if st.sidebar.button("Initialize / Reset Pool", type="primary"):
         D_base = int(liquidity_usd * price_peg * 10**18) # Rough approximation for init
-        p0 = [10**18, int(price_peg * 10**18)]
-        
-        try:
-            trader = Trader(
-                A=int(A),
-                gamma=int(gamma),
+    p0 = [10**18, int(price_peg * 10**18)]
+    
+    try:
+        trader = Trader(
+            A=int(A),
+            gamma=int(gamma),
                 D=D_base,
-                p0=p0,
-                mid_fee=mid_fee,
-                out_fee=out_fee
-            )
-            st.session_state.trader = trader
-            st.session_state.log = []
-            st.session_state.initialized = True
-            # Reset swap state on re-init
+            p0=p0,
+            mid_fee=mid_fee,
+            out_fee=out_fee
+        )
+            
+            # Initialize or reset session state
+        st.session_state.trader = trader
+        st.session_state.log = []
+        st.session_state.initialized = True
             st.session_state.swap_from_token = "USD"
-            st.rerun()
-        except Exception as e:
-            st.error(f"Failed to initialize pool: {e}")
+            
+            # Tracking for Repagging
+            st.session_state.sim_time = 0 # Start at time 0
+            st.session_state.price_history = [] # List of dicts: {time, oracle_price, spot_price}
+            
+            # Initial tweak to set ma recorder state
+            trader.tweak_price(0)
+            
+        st.rerun()
+    except Exception as e:
+        st.error(f"Failed to initialize pool: {e}")
 
-    # --- Main Interface ---
+# --- Main Interface ---
 
-    if 'trader' not in st.session_state:
-        st.info("👈 Please configure and initialize the pool in the sidebar to start.")
+if 'trader' not in st.session_state:
+    st.info("👈 Please configure and initialize the pool in the sidebar to start.")
     else:
-        trader = st.session_state.trader
+trader = st.session_state.trader
 
         # Calculate Balances & Price
         # Coin 0 = EUR, Coin 1 = USD
         bal_eur = Decimal(trader.curve.x[0]) / Decimal(10**18)
-        bal_usd = Decimal(trader.curve.x[1]) / Decimal(10**18)
-        
+bal_usd = Decimal(trader.curve.x[1]) / Decimal(10**18)
+
         # Price of Coin 1 (USD) in terms of Coin 0 (EUR)
-        current_price_eur = Decimal(trader.price_oracle[1]) / Decimal(10**18)
+        # Oracle Price
+        current_oracle_price_eur = Decimal(trader.price_oracle[1]) / Decimal(10**18)
+        
+        # Spot Price (get_p)
+        # get_p returns price of coin 1 in terms of coin 0
+        current_spot_price_eur = Decimal(trader.curve.get_p()) / Decimal(10**18)
 
-        # Display Metrics
-        st.subheader("Pool Status")
-        m1, m2, m3 = st.columns(3)
+# Display Metrics
+st.subheader("Pool Status")
+m1, m2, m3 = st.columns(3)
         m1.metric("Pool EUR Liquidity", f"€{bal_eur:,.2f}")
-        m2.metric("Pool USD Liquidity", f"${bal_usd:,.2f}")
-        m3.metric("Oracle Price (EUR/USD)", f"€{current_price_eur:,.4f}")
+m2.metric("Pool USD Liquidity", f"${bal_usd:,.2f}")
+        m3.metric("Oracle Price (EUR/USD)", f"€{current_oracle_price_eur:,.4f}")
 
-        st.divider()
+st.divider()
 
         # --- Unified Swap Interface ---
         st.subheader("💱 Swap")
 
-        # Initialize Swap State
+        # Initialize Swap State vars if they don't exist
         if 'swap_from_token' not in st.session_state:
             st.session_state.swap_from_token = "USD"
         if 'val_in' not in st.session_state:
@@ -343,6 +357,7 @@ elif page == "Simulator":
                 st.session_state.swap_from_token = "EUR"
             else:
                 st.session_state.swap_from_token = "USD"
+            # Reset amounts on toggle to avoid confusion
             st.session_state.val_in = 0.0
             st.session_state.val_out = 0.0
 
@@ -352,6 +367,7 @@ elif page == "Simulator":
         
         # Callbacks for bi-directional updating
         def update_output():
+            # User changed Amount In. Calculate Amount Out.
             new_in = st.session_state.input_widget
             st.session_state.val_in = new_in
             
@@ -375,6 +391,7 @@ elif page == "Simulator":
                 st.session_state.output_widget = 0.0
 
         def update_input():
+            # User changed Amount Out. Calculate required Amount In.
             new_out = st.session_state.output_widget
             st.session_state.val_out = new_out
             
@@ -391,6 +408,7 @@ elif page == "Simulator":
                     st.session_state.val_in = val
                     st.session_state.input_widget = val
                 else:
+                    # Could not solve (maybe impossible amount)
                     st.session_state.val_in = 0.0
                     st.session_state.input_widget = 0.0
             else:
@@ -498,6 +516,15 @@ elif page == "Simulator":
                     dx = int(Decimal(amount_in_disp) * Decimal(10**18))
                     result = None
                     
+                    # Explicitly calling tweak_price before swap to simulate time passing?
+                    # In reality, swap happens at time t.
+                    # We can increment global sim time by 1 block (12s) per swap
+                    if 'sim_time' not in st.session_state:
+                        st.session_state.sim_time = 0
+                    
+                    st.session_state.sim_time += 12
+                    trader.tweak_price(st.session_state.sim_time)
+                    
                     if from_token == "USD":
                         result = trader.buy(dx, 1, 0) # Sell USD, Buy EUR
                         msg = f"SELL ${amount_in_disp:,.2f} USD -> BUY €{amount_out_disp:,.2f} EUR"
@@ -505,14 +532,28 @@ elif page == "Simulator":
                         result = trader.buy(dx, 0, 1) # Sell EUR, Buy USD
                         msg = f"SELL €{amount_in_disp:,.2f} EUR -> BUY ${amount_out_disp:,.2f} USD"
                     
+                    # Post-swap tweak to update oracle with new price
+                    trader.tweak_price(st.session_state.sim_time)
+                    
                     if result:
                         st.session_state.log.append(msg)
+                        
+                        # Record data for graph
+                        if 'price_history' not in st.session_state:
+                            st.session_state.price_history = []
+                            
+                        st.session_state.price_history.append({
+                            "time": st.session_state.sim_time,
+                            "Oracle Price": float(Decimal(trader.price_oracle[1]) / Decimal(10**18)),
+                            "Spot Price": float(Decimal(trader.curve.get_p()) / Decimal(10**18))
+                        })
+                        
                         st.success("Swap Successful!")
                         # Reset inputs
                         st.session_state.val_in = 0.0
                         st.session_state.val_out = 0.0
-                        st.rerun()
-                    else:
+            st.rerun()
+        else:
                         st.error("Swap Failed (Execution error)")
 
         st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
@@ -580,6 +621,11 @@ elif page == "Simulator":
         
         with col_sim_btns:
             if st.button("⏳ Simulate 10 Minutes"):
+                if 'sim_time' not in st.session_state:
+                    st.session_state.sim_time = 0
+                if 'price_history' not in st.session_state:
+                    st.session_state.price_history = []
+                    
                 # Advance time by 600s
                 step = 600
                 current_t = st.session_state.sim_time
@@ -600,6 +646,11 @@ elif page == "Simulator":
                 st.rerun()
 
             if st.button("⏳ Simulate 1 Hour"):
+                if 'sim_time' not in st.session_state:
+                    st.session_state.sim_time = 0
+                if 'price_history' not in st.session_state:
+                    st.session_state.price_history = []
+                    
                 # Advance time by 3600s
                 step = 3600
                 current_t = st.session_state.sim_time
@@ -616,19 +667,19 @@ elif page == "Simulator":
                 
                 st.session_state.sim_time = target_t
                 st.success(f"Simulated {step}s. Oracle updated.")
-                st.rerun()
+            st.rerun()
 
         with col_sim_chart:
-            if st.session_state.price_history:
+            if 'price_history' in st.session_state and st.session_state.price_history:
                 df = pd.DataFrame(st.session_state.price_history)
                 # Plot simple line chart
                 st.line_chart(df, x="time", y=["Oracle Price", "Spot Price"], color=["#FF4B4B", "#1C83E1"])
-            else:
+        else:
                 st.info("Perform swaps or simulate time to see the price chart.")
 
-        # History
-        if st.session_state.log:
-            st.divider()
-            st.subheader("Transaction History")
-            for msg in reversed(st.session_state.log):
-                st.text(msg)
+# History
+if st.session_state.log:
+    st.divider()
+    st.subheader("Transaction History")
+    for msg in reversed(st.session_state.log):
+        st.text(msg)
