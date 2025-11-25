@@ -32,6 +32,72 @@ def get_trade_preview(trader, dx, i, j):
     except Exception:
         return None
 
+def solve_dx_for_dy(trader, target_dy, i, j):
+    """
+    Approximates required input `dx` to get `target_dy` using binary search.
+    target_dy: in integer units (wei).
+    i: from_token index.
+    j: to_token index.
+    Returns dx (int) or None if not found.
+    """
+    # 1. Estimate price to set bounds
+    # Price is p[1] (price of 1 in terms of 0).
+    # If i=1(USD), j=0(EUR). p is EUR/USD. dx ~ dy / p.
+    # If i=0(EUR), j=1(USD). p is EUR/USD. dx ~ dy * p.
+    
+    price_oracle = Decimal(trader.price_oracle[1]) / Decimal(10**18) # coin1 price in coin0
+    
+    target_dy_dec = Decimal(target_dy)
+    
+    if i == 1 and j == 0: # USD -> EUR
+        # Price is ~0.95. dy ~ dx * 0.95 => dx ~ dy / 0.95
+        est_dx = target_dy_dec / price_oracle
+    elif i == 0 and j == 1: # EUR -> USD
+        # Price is ~0.95. dy ~ dx / 0.95 => dx ~ dy * 0.95
+        est_dx = target_dy_dec * price_oracle
+    else:
+        return None
+
+    # Set generous bounds for binary search
+    low = 0
+    high = int(est_dx * Decimal(2.0)) # Safe upper bound
+    
+    # Binary search
+    best_dx = None
+    min_diff = float('inf')
+    
+    # Iteration limit
+    for _ in range(60):
+        mid = (low + high) // 2
+        sim = copy.deepcopy(trader)
+        dy_mid = sim.buy(mid, i, j)
+        
+        if dy_mid is False:
+            # If buy failed, we might be too high (slippage) or pool logic failed
+            # Assume too high for now? Or maybe 'buy' returns False for liquidity issues.
+            # Let's assume mid is too large for pool to handle.
+            high = mid - 1
+            continue
+            
+        diff = dy_mid - target_dy
+        
+        if abs(diff) < min_diff:
+            min_diff = abs(diff)
+            best_dx = mid
+            
+        if abs(diff) < 100: # Tolerance (wei)
+            return mid
+            
+        if dy_mid < target_dy:
+            low = mid + 1
+        else:
+            high = mid - 1
+            
+        if low > high:
+            break
+            
+    return best_dx
+
 # --- FX API Fetcher ---
 @st.cache_data(ttl=600)
 def fetch_eur_price():
@@ -145,8 +211,8 @@ if page == "Documentation":
     ### Step 3: Perform Swaps
     The simulator features a unified swap card interface:
     1.  **Select Direction:** Use the ⬇ arrow button to toggle between selling USD or selling EUR.
-    2.  **Enter Amount:** Type in the "From" field.
-    3.  **View Preview:** The "To" field automatically calculates the expected return based on the curve math. You will also see the **Effective Exchange Rate** and **Price Impact** below the inputs.
+    2.  **Enter Amount:** Type in the "From" field OR the "To" field.
+    3.  **Bi-directional Calculation:** If you type in "From", it calculates "To". If you type in "To", it estimates the required "From".
     4.  **Swap:** Click the button to execute the trade.
     
     Observe how the **Oracle Price** shifts slightly after large trades, and how the **Liquidity** balances change. If you trade enough to push the ratio far from the center, you will see the exchange rate worsen (slippage).
@@ -263,20 +329,70 @@ elif page == "Simulator":
         # --- Unified Swap Interface ---
         st.subheader("💱 Swap")
 
-        # Initialize Swap State
+        # Initialize Swap State vars if they don't exist
         if 'swap_from_token' not in st.session_state:
             st.session_state.swap_from_token = "USD"
+        if 'val_in' not in st.session_state:
+            st.session_state.val_in = 0.0
+        if 'val_out' not in st.session_state:
+            st.session_state.val_out = 0.0
 
         def toggle_direction():
             if st.session_state.swap_from_token == "USD":
                 st.session_state.swap_from_token = "EUR"
             else:
                 st.session_state.swap_from_token = "USD"
+            # Reset amounts on toggle to avoid confusion
+            st.session_state.val_in = 0.0
+            st.session_state.val_out = 0.0
 
         # Determine Current Direction
         from_token = st.session_state.swap_from_token
         to_token = "EUR" if from_token == "USD" else "USD"
         
+        # Callbacks for bi-directional updating
+        def update_output():
+            # User changed Amount In. Calculate Amount Out.
+            new_in = st.session_state.input_widget
+            st.session_state.val_in = new_in
+            
+            if new_in > 0:
+                dx = int(Decimal(new_in) * Decimal(10**18))
+                dy_int = None
+                if from_token == "USD": # USD->EUR
+                    dy_int = get_trade_preview(trader, dx, 1, 0)
+                else: # EUR->USD
+                    dy_int = get_trade_preview(trader, dx, 0, 1)
+                
+                if dy_int:
+                    st.session_state.val_out = float(Decimal(dy_int) / Decimal(10**18))
+                else:
+                    st.session_state.val_out = 0.0
+            else:
+                st.session_state.val_out = 0.0
+
+        def update_input():
+            # User changed Amount Out. Calculate required Amount In.
+            new_out = st.session_state.output_widget
+            st.session_state.val_out = new_out
+            
+            if new_out > 0:
+                dy_target = int(Decimal(new_out) * Decimal(10**18))
+                dx_int = None
+                if from_token == "USD": # USD->EUR. target_dy is EUR. i=1, j=0.
+                    dx_int = solve_dx_for_dy(trader, dy_target, 1, 0)
+                else: # EUR->USD. target_dy is USD. i=0, j=1.
+                    dx_int = solve_dx_for_dy(trader, dy_target, 0, 1)
+                
+                if dx_int:
+                    st.session_state.val_in = float(Decimal(dx_int) / Decimal(10**18))
+                else:
+                    # Could not solve (maybe impossible amount)
+                    # Keep val_in as is or reset? Let's reset to 0 to indicate failure
+                    st.session_state.val_in = 0.0
+            else:
+                st.session_state.val_in = 0.0
+
         # Centered Card Layout
         col_spacer_left, col_card, col_spacer_right = st.columns([1, 2, 1])
         
@@ -289,13 +405,14 @@ elif page == "Simulator":
                 col_input_from, col_token_from = st.columns([3, 1])
                 
                 with col_input_from:
-                    amount_in = st.number_input(
+                    st.number_input(
                         "Amount In", 
                         min_value=0.0, 
-                        value=0.0, 
-                        step=10.0 if from_token == "EUR" else 10.0,
+                        step=10.0,
+                        value=st.session_state.val_in,
                         label_visibility="collapsed",
-                        key="input_amount"
+                        key="input_widget",
+                        on_change=update_output
                     )
                 
                 with col_token_from:
@@ -309,63 +426,51 @@ elif page == "Simulator":
                 # --- TO SECTION ---
                 st.markdown(f"<div class='swap-header'>To (Estimated)</div>", unsafe_allow_html=True)
                 
-                # Calculate Preview
-                preview_amount = 0.0
-                price_impact_pct = 0.0
-                effective_rate = 0.0
-                can_trade = False
-                
-                if amount_in > 0:
-                    dx = int(Decimal(amount_in) * Decimal(10**18))
-                    # USD=1 (index 1), EUR=0 (index 0)
-                    if from_token == "USD":
-                        # USD -> EUR: buy(dx, 1, 0)
-                        dy_int = get_trade_preview(trader, dx, 1, 0)
-                    else:
-                        # EUR -> USD: buy(dx, 0, 1)
-                        dy_int = get_trade_preview(trader, dx, 0, 1)
-                    
-                    if dy_int:
-                        preview_amount = float(Decimal(dy_int) / Decimal(10**18))
-                        can_trade = True
-                        
-                        # Calc stats
-                        if preview_amount > 0:
-                            if from_token == "USD": # In USD, Out EUR
-                                effective_rate = preview_amount / amount_in # EUR per USD
-                            else: # In EUR, Out USD
-                                effective_rate = amount_in / preview_amount # EUR per USD (normalized)
-                                
-                            oracle_rate = float(current_price_eur)
-                            
-                            expected_out_oracle = 0
-                            if from_token == "USD":
-                                # Sell USD for EUR
-                                # Expected EUR = amount_in * oracle_rate
-                                expected_out_oracle = amount_in * oracle_rate
-                                price_impact_pct = ((preview_amount - expected_out_oracle) / expected_out_oracle) * 100
-                            else:
-                                # Sell EUR for USD
-                                # Expected USD = amount_in / oracle_rate
-                                expected_out_oracle = amount_in / oracle_rate
-                                price_impact_pct = ((preview_amount - expected_out_oracle) / expected_out_oracle) * 100
-
                 col_input_to, col_token_to = st.columns([3, 1])
                 
                 with col_input_to:
                     st.number_input(
                         "Amount Out",
-                        value=preview_amount,
-                        # disabled=True, # Removed to make it look "filled" and active
+                        min_value=0.0,
+                        step=10.0,
+                        value=st.session_state.val_out,
                         label_visibility="collapsed",
-                        key="output_amount"
+                        key="output_widget",
+                        on_change=update_input
                     )
                 
                 with col_token_to:
                      st.selectbox("Token", [to_token], disabled=True, label_visibility="collapsed", key="token_out_select")
 
                 # --- INFO PREVIEW SECTION (Inside Card) ---
-                if can_trade and amount_in > 0:
+                # Recalculate display stats based on current session state
+                amount_in_disp = st.session_state.val_in
+                amount_out_disp = st.session_state.val_out
+                can_trade = amount_in_disp > 0 and amount_out_disp > 0
+                
+                if can_trade:
+                    # Calc stats for display
+                    if from_token == "USD": # In USD, Out EUR
+                        effective_rate = amount_out_disp / amount_in_disp # EUR per USD
+                    else: # In EUR, Out USD
+                        effective_rate = amount_in_disp / amount_out_disp # EUR per USD (normalized)
+                    
+                    oracle_rate = float(current_price_eur)
+                    expected_out_oracle = 0
+                    price_impact_pct = 0.0
+                    
+                    if from_token == "USD":
+                        # Sell USD for EUR
+                        expected_out_oracle = amount_in_disp * oracle_rate
+                        if expected_out_oracle > 0:
+                            price_impact_pct = ((amount_out_disp - expected_out_oracle) / expected_out_oracle) * 100
+                    else:
+                        # Sell EUR for USD
+                        if oracle_rate > 0:
+                            expected_out_oracle = amount_in_disp / oracle_rate
+                            if expected_out_oracle > 0:
+                                price_impact_pct = ((amount_out_disp - expected_out_oracle) / expected_out_oracle) * 100
+
                     st.markdown("---")
                     st.markdown(f"""
                     <div style="display: flex; justify-content: space-between; font-size: 0.9em; color: #555;">
@@ -382,19 +487,22 @@ elif page == "Simulator":
 
                 # --- SWAP ACTION BUTTON ---
                 if st.button("Swap", type="primary", use_container_width=True, disabled=not can_trade):
-                    dx = int(Decimal(amount_in) * Decimal(10**18))
+                    dx = int(Decimal(amount_in_disp) * Decimal(10**18))
                     result = None
                     
                     if from_token == "USD":
                         result = trader.buy(dx, 1, 0) # Sell USD, Buy EUR
-                        msg = f"SELL ${amount_in:,.2f} USD -> BUY €{preview_amount:,.2f} EUR"
+                        msg = f"SELL ${amount_in_disp:,.2f} USD -> BUY €{amount_out_disp:,.2f} EUR"
                     else:
                         result = trader.buy(dx, 0, 1) # Sell EUR, Buy USD
-                        msg = f"SELL €{amount_in:,.2f} EUR -> BUY ${preview_amount:,.2f} USD"
+                        msg = f"SELL €{amount_in_disp:,.2f} EUR -> BUY ${amount_out_disp:,.2f} USD"
                     
                     if result:
                         st.session_state.log.append(msg)
                         st.success("Swap Successful!")
+                        # Reset inputs
+                        st.session_state.val_in = 0.0
+                        st.session_state.val_out = 0.0
                         st.rerun()
                     else:
                         st.error("Swap Failed (Execution error)")
