@@ -5,7 +5,6 @@ import copy
 from decimal import Decimal
 
 # Add tests/utils directory to path to allow importing simulator
-# This assumes website.py is in the same directory as the 'tests' folder
 current_dir = os.path.dirname(os.path.abspath(__file__))
 simulator_path = os.path.join(current_dir, "tests", "utils")
 if simulator_path not in sys.path:
@@ -24,7 +23,6 @@ def get_trade_preview(trader, dx, i, j):
     Returns dy (amount received) or None if trade fails.
     """
     try:
-        # Create a deep copy to ensure no state leaks
         sim_trader = copy.deepcopy(trader)
         dy = sim_trader.buy(dx, i, j)
         return dy
@@ -32,6 +30,37 @@ def get_trade_preview(trader, dx, i, j):
         return None
 
 st.set_page_config(page_title="Stablecoin DEX Simulator", layout="wide")
+
+# Custom CSS for the card look and input styling
+st.markdown("""
+<style>
+    /* Card Container */
+    .swap-container {
+        background-color: white;
+        padding: 20px;
+        border-radius: 16px;
+        border: 1px solid #e0e0e0;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        max-width: 480px;
+        margin: 0 auto;
+    }
+    
+    /* Remove default number input arrows/spinners if possible (browser dependent) */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { 
+        -webkit-appearance: none; 
+        margin: 0; 
+    }
+    
+    /* Headers in the card */
+    .swap-header {
+        font-size: 14px;
+        color: #666;
+        margin-bottom: 5px;
+        font-weight: 500;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Navigation
 page = st.sidebar.radio("Navigation", ["Simulator", "Documentation"])
@@ -99,10 +128,7 @@ if page == "Documentation":
 
 elif page == "Simulator":
     st.title("💱 Twocrypto-ng Simulator: USD/KRW")
-    st.markdown("""
-    This website simulates a decentralized exchange using the **Curve Twocrypto-ng** mathematical model. 
-    It simulates a liquidity pool between **KRW** (Korean Won) and **USD** (US Dollar).
-    """)
+    st.markdown("Simulate a decentralized exchange liquidity pool between **KRW** (Korean Won) and **USD** (US Dollar).")
 
     # --- Sidebar: Configuration ---
     st.sidebar.header("1. Pool Configuration")
@@ -129,16 +155,9 @@ elif page == "Simulator":
     liquidity_usd = st.sidebar.number_input("Total Liquidity ($ Value)", value=default_liquidity)
 
     if st.sidebar.button("Initialize / Reset Pool", type="primary"):
-        # Logic:
-        # Coin 0 = KRW (Base, price=1 relative to itself)
-        # Coin 1 = USD (Price = 1350 relative to KRW)
-        # D (Invariant) is calculated in KRW units.
-        
         D_krw = int(liquidity_usd * price_peg * 10**18)
         p0 = [10**18, int(price_peg * 10**18)]
         
-        # Initialize Trader from simulator.py
-        # fees in Trader are floats (e.g. 1e-3)
         try:
             trader = Trader(
                 A=int(A),
@@ -151,6 +170,8 @@ elif page == "Simulator":
             st.session_state.trader = trader
             st.session_state.log = []
             st.session_state.initialized = True
+            # Reset swap state on re-init
+            st.session_state.swap_from_token = "USD"
             st.rerun()
         except Exception as e:
             st.error(f"Failed to initialize pool: {e}")
@@ -162,13 +183,9 @@ elif page == "Simulator":
     else:
         trader = st.session_state.trader
 
-        # Calculate Balances
-        # curve.x is raw balance in 18 decimals
+        # Calculate Balances & Price
         bal_krw = Decimal(trader.curve.x[0]) / Decimal(10**18)
         bal_usd = Decimal(trader.curve.x[1]) / Decimal(10**18)
-
-        # Calculate Price from Oracle
-        # price_oracle[1] is price of Coin 1 (USD) in terms of Coin 0 (KRW) scaled by 10^18
         current_price_krw = Decimal(trader.price_oracle[1]) / Decimal(10**18)
 
         # Display Metrics
@@ -180,85 +197,150 @@ elif page == "Simulator":
 
         st.divider()
 
-        # Swap Section
-        st.subheader("💱 Swap Tokens")
+        # --- Unified Swap Interface ---
+        st.subheader("💱 Swap")
 
-        col_buy_krw, col_buy_usd = st.columns(2)
+        # Initialize Swap State
+        if 'swap_from_token' not in st.session_state:
+            st.session_state.swap_from_token = "USD"
 
-        with col_buy_krw:
-            st.markdown("#### Buy KRW (Sell USD)")
-            sell_usd_amt = st.number_input("Amount USD to sell", min_value=0.0, value=100.0, step=10.0, key="sell_usd")
-            
-            # Preview Logic
-            if sell_usd_amt > 0:
-                dx = int(Decimal(sell_usd_amt) * Decimal(10**18))
-                preview_dy = get_trade_preview(trader, dx, 1, 0) # 1 (USD) -> 0 (KRW)
+        def toggle_direction():
+            if st.session_state.swap_from_token == "USD":
+                st.session_state.swap_from_token = "KRW"
+            else:
+                st.session_state.swap_from_token = "USD"
+
+        # Determine Current Direction
+        from_token = st.session_state.swap_from_token
+        to_token = "KRW" if from_token == "USD" else "USD"
+        
+        # Centered Card Layout
+        col_spacer_left, col_card, col_spacer_right = st.columns([1, 2, 1])
+        
+        with col_card:
+            # Create a container that looks like a card
+            with st.container(border=True):
                 
-                if preview_dy:
-                    got_krw = Decimal(preview_dy) / Decimal(10**18)
-                    effective_rate = got_krw / Decimal(sell_usd_amt)
-                    oracle_rate = current_price_krw
-                    price_impact = ((effective_rate - oracle_rate) / oracle_rate) * 100
+                # --- FROM SECTION ---
+                st.markdown(f"<div class='swap-header'>From</div>", unsafe_allow_html=True)
+                col_input_from, col_token_from = st.columns([3, 1])
+                
+                with col_input_from:
+                    # Clean input with no label (handled by custom header above)
+                    amount_in = st.number_input(
+                        "Amount In", 
+                        min_value=0.0, 
+                        value=0.0, 
+                        step=1.0 if from_token == "KRW" else 0.1,
+                        label_visibility="collapsed",
+                        key="input_amount"
+                    )
+                
+                with col_token_from:
+                    # Static token display or selectbox (disabled for now as we only have 2)
+                    st.selectbox("Token", [from_token], disabled=True, label_visibility="collapsed", key="token_in_select")
+
+                # --- SWITCH BUTTON ---
+                # Centered button to toggle direction
+                col_switch_left, col_switch_btn, col_switch_right = st.columns([4, 1, 4])
+                with col_switch_btn:
+                    st.button("⬇", on_click=toggle_direction, help="Switch Tokens", use_container_width=True)
+
+                # --- TO SECTION ---
+                st.markdown(f"<div class='swap-header'>To (Estimated)</div>", unsafe_allow_html=True)
+                
+                # Calculate Preview
+                preview_amount = 0.0
+                price_impact_pct = 0.0
+                effective_rate = 0.0
+                can_trade = False
+                
+                if amount_in > 0:
+                    dx = int(Decimal(amount_in) * Decimal(10**18))
+                    # USD=1 (index 1), KRW=0 (index 0)
+                    if from_token == "USD":
+                        # USD -> KRW: buy(dx, 1, 0)
+                        dy_int = get_trade_preview(trader, dx, 1, 0)
+                    else:
+                        # KRW -> USD: buy(dx, 0, 1)
+                        dy_int = get_trade_preview(trader, dx, 0, 1)
                     
-                    st.info(f"""
-                    **📊 Trade Preview**
-                    * **Expected Output:** ₩{got_krw:,.2f}
-                    * **Exchange Rate:** 1 USD = ₩{effective_rate:,.2f}
-                    * **Price Impact:** {price_impact:+.4f}%
-                    """)
-                else:
-                    st.warning("⚠️ Trade likely to fail (too large or pool empty)")
+                    if dy_int:
+                        preview_amount = float(Decimal(dy_int) / Decimal(10**18))
+                        can_trade = True
+                        
+                        # Calc stats
+                        if preview_amount > 0:
+                            if from_token == "USD": # In USD, Out KRW
+                                effective_rate = preview_amount / amount_in # KRW per USD
+                            else: # In KRW, Out USD
+                                # Effective rate usually normalized to KRW/USD
+                                effective_rate = amount_in / preview_amount # KRW per USD
+                                
+                            oracle_rate = float(current_price_krw)
+                            # Price impact relative to oracle
+                            # If selling USD for KRW (getting less KRW than oracle says = negative impact)
+                            # Expected KRW = amount_in * oracle_rate
+                            # Actual KRW = preview_amount
+                            
+                            expected_out_oracle = 0
+                            if from_token == "USD":
+                                expected_out_oracle = amount_in * oracle_rate
+                                price_impact_pct = ((preview_amount - expected_out_oracle) / expected_out_oracle) * 100
+                            else:
+                                # Selling KRW for USD. 
+                                # Expected USD = amount_in / oracle_rate
+                                expected_out_oracle = amount_in / oracle_rate
+                                price_impact_pct = ((preview_amount - expected_out_oracle) / expected_out_oracle) * 100
 
-            if st.button("Sell USD"):
-                dx = int(Decimal(sell_usd_amt) * Decimal(10**18))
-                # buy(dx, i, j) -> User sends dx of i, gets dy of j
-                # i=1 (USD), j=0 (KRW)
-                dy = trader.buy(dx, 1, 0)
+                col_input_to, col_token_to = st.columns([3, 1])
                 
-                if dy:
-                    got_krw = Decimal(dy) / Decimal(10**18)
-                    st.success(f"Swapped ${sell_usd_amt:,.2f} USD for ₩{got_krw:,.0f} KRW")
-                    st.session_state.log.append(f"SELL ${sell_usd_amt} USD -> BUY ₩{got_krw:,.2f} KRW @ {got_krw/Decimal(sell_usd_amt):.2f}")
-                    st.rerun()
-                else:
-                    st.error("Swap failed (Slippage or Limits)")
+                with col_input_to:
+                    st.number_input(
+                        "Amount Out",
+                        value=preview_amount,
+                        disabled=True, # Read-only
+                        label_visibility="collapsed",
+                        key="output_amount"
+                    )
+                
+                with col_token_to:
+                     st.selectbox("Token", [to_token], disabled=True, label_visibility="collapsed", key="token_out_select")
 
-        with col_buy_usd:
-            st.markdown("#### Buy USD (Sell KRW)")
-            sell_krw_amt = st.number_input("Amount KRW to sell", min_value=0.0, value=100000.0, step=1000.0, key="sell_krw")
-            
-            # Preview Logic
-            if sell_krw_amt > 0:
-                dx = int(Decimal(sell_krw_amt) * Decimal(10**18))
-                preview_dy = get_trade_preview(trader, dx, 0, 1) # 0 (KRW) -> 1 (USD)
-                
-                if preview_dy:
-                    got_usd = Decimal(preview_dy) / Decimal(10**18)
-                    effective_rate = Decimal(sell_krw_amt) / got_usd # KRW per USD
-                    oracle_rate = current_price_krw
-                    price_impact = ((effective_rate - oracle_rate) / oracle_rate) * 100
+                # --- INFO PREVIEW SECTION (Inside Card) ---
+                if can_trade and amount_in > 0:
+                    st.markdown("---")
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: space-between; font-size: 0.9em; color: #555;">
+                        <span>Price</span>
+                        <span>1 USD = {effective_rate:,.2f} KRW</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.9em; color: {('#d32f2f' if price_impact_pct < -0.1 else '#388e3c')};">
+                        <span>Price Impact</span>
+                        <span>{price_impact_pct:+.4f}%</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
+
+                # --- SWAP ACTION BUTTON ---
+                if st.button("Swap", type="primary", use_container_width=True, disabled=not can_trade):
+                    dx = int(Decimal(amount_in) * Decimal(10**18))
+                    result = None
                     
-                    st.info(f"""
-                    **📊 Trade Preview**
-                    * **Expected Output:** ${got_usd:,.2f}
-                    * **Exchange Rate:** 1 USD = ₩{effective_rate:,.2f}
-                    * **Price Impact:** {price_impact:+.4f}%
-                    """)
-                else:
-                    st.warning("⚠️ Trade likely to fail (too large or pool empty)")
-
-            if st.button("Sell KRW"):
-                dx = int(Decimal(sell_krw_amt) * Decimal(10**18))
-                # i=0 (KRW), j=1 (USD)
-                dy = trader.buy(dx, 0, 1)
-                
-                if dy:
-                    got_usd = Decimal(dy) / Decimal(10**18)
-                    st.success(f"Swapped ₩{sell_krw_amt:,.0f} KRW for ${got_usd:,.2f} USD")
-                    st.session_state.log.append(f"SELL ₩{sell_krw_amt} KRW -> BUY ${got_usd:,.2f} USD @ {Decimal(sell_krw_amt)/got_usd:.2f}")
-                    st.rerun()
-                else:
-                    st.error("Swap failed (Slippage or Limits)")
+                    if from_token == "USD":
+                        result = trader.buy(dx, 1, 0) # Sell USD, Buy KRW
+                        msg = f"SELL ${amount_in:,.2f} USD -> BUY ₩{preview_amount:,.0f} KRW"
+                    else:
+                        result = trader.buy(dx, 0, 1) # Sell KRW, Buy USD
+                        msg = f"SELL ₩{amount_in:,.0f} KRW -> BUY ${preview_amount:,.2f} USD"
+                    
+                    if result:
+                        st.session_state.log.append(msg)
+                        st.success("Swap Successful!")
+                        st.rerun()
+                    else:
+                        st.error("Swap Failed (Execution error)")
 
         # History
         if st.session_state.log:
