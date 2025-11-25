@@ -6,6 +6,9 @@ import requests
 import time
 from datetime import datetime
 from decimal import Decimal
+import pandas as pd
+import numpy as np
+import altair as alt
 
 # Add tests/utils directory to path to allow importing simulator
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -73,9 +76,6 @@ def solve_dx_for_dy(trader, target_dy, i, j):
         dy_mid = sim.buy(mid, i, j)
         
         if dy_mid is False:
-            # If buy failed, we might be too high (slippage) or pool logic failed
-            # Assume too high for now? Or maybe 'buy' returns False for liquidity issues.
-            # Let's assume mid is too large for pool to handle.
             high = mid - 1
             continue
             
@@ -184,10 +184,11 @@ if page == "Documentation":
         *   **Large Gamma:** Liquidity is spread out. Good for high volatility.
     *   **In this sim:** Default is `10^15` (or 0.001).
 
-    ### 3. The Oracle Price
+    ### 3. The Oracle Price & Recentering
     *   **What it is:** The pool's internal "belief" of what the fair market price is.
     *   **How it updates:** It is an Exponential Moving Average (EMA) of recent trades.
     *   **Why it matters:** The pool concentrates its liquidity around this price. If the market price moves away from the Oracle Price, the pool will automatically re-center itself over time (re-pegging), incurring a small loss to liquidity providers to ensure they are always selling the expensive asset and buying the cheap one.
+    *   **In Simulator:** You can observe this process in the **Repagging Simulation** section.
 
     ### 4. Fees
     *   **Mid Fee:** The minimum fee charged when the pool is balanced.
@@ -329,7 +330,7 @@ elif page == "Simulator":
         # --- Unified Swap Interface ---
         st.subheader("💱 Swap")
 
-        # Initialize Swap State vars if they don't exist
+        # Initialize Swap State
         if 'swap_from_token' not in st.session_state:
             st.session_state.swap_from_token = "USD"
         if 'val_in' not in st.session_state:
@@ -342,7 +343,6 @@ elif page == "Simulator":
                 st.session_state.swap_from_token = "EUR"
             else:
                 st.session_state.swap_from_token = "USD"
-            # Reset amounts on toggle to avoid confusion
             st.session_state.val_in = 0.0
             st.session_state.val_out = 0.0
 
@@ -352,7 +352,6 @@ elif page == "Simulator":
         
         # Callbacks for bi-directional updating
         def update_output():
-            # User changed Amount In. Calculate Amount Out.
             new_in = st.session_state.input_widget
             st.session_state.val_in = new_in
             
@@ -376,7 +375,6 @@ elif page == "Simulator":
                 st.session_state.output_widget = 0.0
 
         def update_input():
-            # User changed Amount Out. Calculate required Amount In.
             new_out = st.session_state.output_widget
             st.session_state.val_out = new_out
             
@@ -393,7 +391,6 @@ elif page == "Simulator":
                     st.session_state.val_in = val
                     st.session_state.input_widget = val
                 else:
-                    # Could not solve (maybe impossible amount)
                     st.session_state.val_in = 0.0
                     st.session_state.input_widget = 0.0
             else:
@@ -517,6 +514,117 @@ elif page == "Simulator":
                         st.rerun()
                     else:
                         st.error("Swap Failed (Execution error)")
+
+        st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
+        st.subheader("💧 Liquidity Density")
+        
+        # Generate Data for Graph
+        # Center around Oracle Price
+        p_oracle = float(current_price_eur) 
+        p_spot = float(Decimal(trader.curve.get_p()) / Decimal(10**18))
+        
+        # Gamma defines width. 
+        # For visualization, we'll use a heuristic width based on gamma or fixed percentage
+        
+        x = np.linspace(p_oracle * 0.95, p_oracle * 1.05, 100)
+        
+        # Approx distribution (Gaussian-ish) centered at Oracle Price
+        # Width factor: 1.5% relative width for viz
+        sigma = p_oracle * 0.015 
+        
+        y = np.exp(-0.5 * ((x - p_oracle) / sigma) ** 2)
+        
+        df_chart = pd.DataFrame({'Price': x, 'Liquidity': y})
+        
+        # Split into Bid (Buy EUR) and Ask (Sell EUR)
+        # Relative to current spot price
+        df_chart['Side'] = np.where(df_chart['Price'] < p_spot, 'Bid (Buy EUR)', 'Ask (Sell EUR)')
+        
+        # Altair Chart
+        c = alt.Chart(df_chart).mark_area(opacity=0.6).encode(
+            x=alt.X('Price', axis=alt.Axis(format='€,.4f'), title='EUR/USD Price'),
+            y=alt.Y('Liquidity', axis=None),
+            color=alt.Color('Side', scale=alt.Scale(domain=['Bid (Buy EUR)', 'Ask (Sell EUR)'], range=['#6c8eef', '#4caf50'])),
+            tooltip=[alt.Tooltip('Price', format='€,.4f'), alt.Tooltip('Liquidity', format='.2f')]
+        ).properties(
+            height=300
+        )
+        
+        # Add line for Spot Price
+        rule = alt.Chart(pd.DataFrame({'Price': [p_spot]})).mark_rule(color='red', strokeDash=[5, 5], strokeWidth=2).encode(
+            x='Price'
+        )
+        
+        # Text label for Spot Price
+        text = alt.Chart(pd.DataFrame({'Price': [p_spot], 'y': [1.0]})).mark_text(
+            align='center', baseline='bottom', color='red', dy=-10, fontSize=12, text=f"Current: €{p_spot:.4f}"
+        ).encode(
+            x='Price',
+            y=alt.value(0)
+        )
+
+        st.altair_chart(c + rule + text, use_container_width=True)
+
+        st.divider()
+        
+        # --- Repagging Simulation ---
+        st.subheader("📈 Repagging Simulation")
+        st.markdown("""
+        **How Recentering Works:**
+        If the **Spot Price** (derived from pool balances) deviates from the **Oracle Price** (EMA), the pool gradually adjusts its internal liquidity concentration (Price Scale) towards the Oracle Price.
+        
+        Use the buttons below to simulate time passing without trading, which allows the Oracle to catch up to the Spot price (or vice versa).
+        """)
+        
+        col_sim_btns, col_sim_chart = st.columns([1, 2])
+        
+        with col_sim_btns:
+            if st.button("⏳ Simulate 10 Minutes"):
+                # Advance time by 600s
+                step = 600
+                current_t = st.session_state.sim_time
+                target_t = current_t + step
+                
+                # We can step gradually to record points for the graph
+                # Step every 60s
+                for t in range(current_t + 60, target_t + 60, 60):
+                    trader.tweak_price(t)
+                    st.session_state.price_history.append({
+                        "time": t,
+                        "Oracle Price": float(Decimal(trader.price_oracle[1]) / Decimal(10**18)),
+                        "Spot Price": float(Decimal(trader.curve.get_p()) / Decimal(10**18))
+                    })
+                
+                st.session_state.sim_time = target_t
+                st.success(f"Simulated {step}s. Oracle updated.")
+                st.rerun()
+
+            if st.button("⏳ Simulate 1 Hour"):
+                # Advance time by 3600s
+                step = 3600
+                current_t = st.session_state.sim_time
+                target_t = current_t + step
+                
+                # Step every 5 mins
+                for t in range(current_t + 300, target_t + 300, 300):
+                    trader.tweak_price(t)
+                    st.session_state.price_history.append({
+                        "time": t,
+                        "Oracle Price": float(Decimal(trader.price_oracle[1]) / Decimal(10**18)),
+                        "Spot Price": float(Decimal(trader.curve.get_p()) / Decimal(10**18))
+                    })
+                
+                st.session_state.sim_time = target_t
+                st.success(f"Simulated {step}s. Oracle updated.")
+                st.rerun()
+
+        with col_sim_chart:
+            if st.session_state.price_history:
+                df = pd.DataFrame(st.session_state.price_history)
+                # Plot simple line chart
+                st.line_chart(df, x="time", y=["Oracle Price", "Spot Price"], color=["#FF4B4B", "#1C83E1"])
+            else:
+                st.info("Perform swaps or simulate time to see the price chart.")
 
         # History
         if st.session_state.log:
