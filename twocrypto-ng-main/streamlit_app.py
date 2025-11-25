@@ -1,6 +1,7 @@
 import streamlit as st
 import sys
 import os
+import copy
 from decimal import Decimal
 
 # Add tests/utils directory to path to allow importing simulator
@@ -16,6 +17,19 @@ except ImportError as e:
     st.error(f"Error importing 'simulator.py': {e}")
     st.info("Make sure you are running this file from the 'twocrypto-ng-main' directory.")
     st.stop()
+
+def get_trade_preview(trader, dx, i, j):
+    """
+    Simulates a trade without modifying the actual trader state.
+    Returns dy (amount received) or None if trade fails.
+    """
+    try:
+        # Create a deep copy to ensure no state leaks
+        sim_trader = copy.deepcopy(trader)
+        dy = sim_trader.buy(dx, i, j)
+        return dy
+    except Exception:
+        return None
 
 st.set_page_config(page_title="Stablecoin DEX Simulator", layout="wide")
 
@@ -175,6 +189,26 @@ elif page == "Simulator":
             st.markdown("#### Buy KRW (Sell USD)")
             sell_usd_amt = st.number_input("Amount USD to sell", min_value=0.0, value=100.0, step=10.0, key="sell_usd")
             
+            # Preview Logic
+            if sell_usd_amt > 0:
+                dx = int(Decimal(sell_usd_amt) * Decimal(10**18))
+                preview_dy = get_trade_preview(trader, dx, 1, 0) # 1 (USD) -> 0 (KRW)
+                
+                if preview_dy:
+                    got_krw = Decimal(preview_dy) / Decimal(10**18)
+                    effective_rate = got_krw / Decimal(sell_usd_amt)
+                    oracle_rate = current_price_krw
+                    price_impact = ((effective_rate - oracle_rate) / oracle_rate) * 100
+                    
+                    st.info(f"""
+                    **📊 Trade Preview**
+                    * **Expected Output:** ₩{got_krw:,.2f}
+                    * **Exchange Rate:** 1 USD = ₩{effective_rate:,.2f}
+                    * **Price Impact:** {price_impact:+.4f}%
+                    """)
+                else:
+                    st.warning("⚠️ Trade likely to fail (too large or pool empty)")
+
             if st.button("Sell USD"):
                 dx = int(Decimal(sell_usd_amt) * Decimal(10**18))
                 # buy(dx, i, j) -> User sends dx of i, gets dy of j
@@ -193,6 +227,26 @@ elif page == "Simulator":
             st.markdown("#### Buy USD (Sell KRW)")
             sell_krw_amt = st.number_input("Amount KRW to sell", min_value=0.0, value=100000.0, step=1000.0, key="sell_krw")
             
+            # Preview Logic
+            if sell_krw_amt > 0:
+                dx = int(Decimal(sell_krw_amt) * Decimal(10**18))
+                preview_dy = get_trade_preview(trader, dx, 0, 1) # 0 (KRW) -> 1 (USD)
+                
+                if preview_dy:
+                    got_usd = Decimal(preview_dy) / Decimal(10**18)
+                    effective_rate = Decimal(sell_krw_amt) / got_usd # KRW per USD
+                    oracle_rate = current_price_krw
+                    price_impact = ((effective_rate - oracle_rate) / oracle_rate) * 100
+                    
+                    st.info(f"""
+                    **📊 Trade Preview**
+                    * **Expected Output:** ${got_usd:,.2f}
+                    * **Exchange Rate:** 1 USD = ₩{effective_rate:,.2f}
+                    * **Price Impact:** {price_impact:+.4f}%
+                    """)
+                else:
+                    st.warning("⚠️ Trade likely to fail (too large or pool empty)")
+
             if st.button("Sell KRW"):
                 dx = int(Decimal(sell_krw_amt) * Decimal(10**18))
                 # i=0 (KRW), j=1 (USD)
