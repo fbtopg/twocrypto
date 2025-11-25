@@ -33,11 +33,11 @@ def get_trade_preview(trader, dx, i, j):
         return None
 
 # --- FX API Fetcher ---
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def fetch_eur_price():
     """
     Fetches the EUR rate (USD base) from ForexRateAPI.
-    Refreshes every 60 seconds.
+    Refreshes every 10 minutes (600 seconds).
     Returns (rate, timestamp) tuple.
     """
     url = "https://api.forexrateapi.com/v1/latest"
@@ -172,7 +172,7 @@ elif page == "Simulator":
             last_updated_str = datetime.fromtimestamp(fetched_ts).strftime('%H:%M:%S')
             now = time.time()
             elapsed = now - fetched_ts
-            time_left = max(0, int(60 - elapsed))
+            time_left = max(0, int(600 - elapsed))
             
             st.info(f"""
             **🟢 Live FX Rate Connected**
