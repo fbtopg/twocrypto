@@ -365,11 +365,15 @@ elif page == "Simulator":
                     dy_int = get_trade_preview(trader, dx, 0, 1)
                 
                 if dy_int:
-                    st.session_state.val_out = float(Decimal(dy_int) / Decimal(10**18))
+                    val = float(Decimal(dy_int) / Decimal(10**18))
+                    st.session_state.val_out = val
+                    st.session_state.output_widget = val
                 else:
                     st.session_state.val_out = 0.0
+                    st.session_state.output_widget = 0.0
             else:
                 st.session_state.val_out = 0.0
+                st.session_state.output_widget = 0.0
 
         def update_input():
             # User changed Amount Out. Calculate required Amount In.
@@ -385,13 +389,16 @@ elif page == "Simulator":
                     dx_int = solve_dx_for_dy(trader, dy_target, 0, 1)
                 
                 if dx_int:
-                    st.session_state.val_in = float(Decimal(dx_int) / Decimal(10**18))
+                    val = float(Decimal(dx_int) / Decimal(10**18))
+                    st.session_state.val_in = val
+                    st.session_state.input_widget = val
                 else:
                     # Could not solve (maybe impossible amount)
-                    # Keep val_in as is or reset? Let's reset to 0 to indicate failure
                     st.session_state.val_in = 0.0
+                    st.session_state.input_widget = 0.0
             else:
                 st.session_state.val_in = 0.0
+                st.session_state.input_widget = 0.0
 
         # Centered Card Layout
         col_spacer_left, col_card, col_spacer_right = st.columns([1, 2, 1])
