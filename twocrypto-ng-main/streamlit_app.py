@@ -132,7 +132,7 @@ if page == "Documentation":
 
     ### Step 1: Initialize the Pool
     1.  Go to the **Sidebar**.
-    2.  Set the **Initial Price**. The default is fetched from a real-time FX API.
+    2.  **Initial Price:** This is automatically fetched from a live FX API (ForexRateAPI) for the current **EUR/USD** rate. It refreshes every 10 minutes.
     3.  Set the **Total Liquidity** (e.g., $1,000,000 USD worth of tokens).
     4.  Click **Initialize / Reset Pool**.
 
@@ -143,8 +143,11 @@ if page == "Documentation":
     *   **Oracle Price:** The current internal exchange rate.
 
     ### Step 3: Perform Swaps
-    *   **Buy EUR:** Enter the amount of USD you want to sell. Click "Swap".
-    *   **Buy USD:** Enter the amount of EUR you want to sell. Click "Swap".
+    The simulator features a unified swap card interface:
+    1.  **Select Direction:** Use the ⬇ arrow button to toggle between selling USD or selling EUR.
+    2.  **Enter Amount:** Type in the "From" field.
+    3.  **View Preview:** The "To" field automatically calculates the expected return based on the curve math. You will also see the **Effective Exchange Rate** and **Price Impact** below the inputs.
+    4.  **Swap:** Click the button to execute the trade.
     
     Observe how the **Oracle Price** shifts slightly after large trades, and how the **Liquidity** balances change. If you trade enough to push the ratio far from the center, you will see the exchange rate worsen (slippage).
 
