@@ -3,3 +3,6 @@ pandas
 numpy
 requests
 streamlit-autorefresh
+vyper==0.4.1
+snekmate==0.1.1
+git+https://github.com/vyperlang/titanoboa.git@c098714a76d9b983e0dda5b2b1954f19d5dd6478
