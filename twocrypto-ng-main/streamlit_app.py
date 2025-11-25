@@ -3,6 +3,8 @@ import sys
 import os
 import copy
 import requests
+import time
+from datetime import datetime
 from decimal import Decimal
 from streamlit_autorefresh import st_autorefresh
 
@@ -37,6 +39,7 @@ def fetch_eur_price():
     """
     Fetches the EUR rate (USD base) from ForexRateAPI.
     Refreshes every 60 seconds.
+    Returns (rate, timestamp) tuple.
     """
     url = "https://api.forexrateapi.com/v1/latest"
     params = {
@@ -47,15 +50,15 @@ def fetch_eur_price():
     try:
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
+        current_ts = time.time()
         if data.get("success"):
             # Rate is EUR per 1 USD. e.g. 0.95
-            return data["rates"]["EUR"]
+            return data["rates"]["EUR"], current_ts
         else:
-            st.error(f"API Error: {data.get('error')}")
-            return None
+            # If API fails, return None but cache failure briefly? No, st.error handles it.
+            return None, current_ts
     except Exception as e:
-        st.error(f"Network Error: {e}")
-        return None
+        return None, time.time()
 
 st.set_page_config(page_title="Stablecoin DEX Simulator", layout="wide")
 
@@ -163,9 +166,24 @@ elif page == "Simulator":
     st.markdown("Simulate a decentralized exchange liquidity pool between **EUR** (Euro) and **USD** (US Dollar).")
 
     # Fetch Live Rate
-    live_rate = fetch_eur_price()
+    live_rate, fetched_ts = fetch_eur_price()
+    
     if live_rate:
-        st.success(f"🟢 Live FX Rate Connected: 1 USD = €{live_rate:.4f} EUR")
+        # Calculate Time Metrics
+        last_updated_str = datetime.fromtimestamp(fetched_ts).strftime('%H:%M:%S')
+        
+        # Calculate time left (Cache expires in 60s)
+        now = time.time()
+        elapsed = now - fetched_ts
+        time_left = max(0, 60 - int(elapsed))
+        
+        st.info(f"""
+        **🟢 Live FX Rate Connected**
+        
+        **Rate:** 1 USD = €{live_rate:.4f} EUR
+        **Last Updated:** {last_updated_str}
+        **Next Update in:** {time_left} seconds
+        """)
     else:
         st.warning("🔴 Live FX Rate Unavailable. Using fallback default (0.95).")
         live_rate = 0.95
