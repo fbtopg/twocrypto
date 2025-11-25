@@ -353,7 +353,7 @@ elif page == "Simulator":
                     st.number_input(
                         "Amount Out",
                         value=preview_amount,
-                        disabled=True, 
+                        # disabled=True, # Removed to make it look "filled" and active
                         label_visibility="collapsed",
                         key="output_amount"
                     )
