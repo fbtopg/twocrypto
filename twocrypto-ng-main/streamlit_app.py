@@ -481,6 +481,10 @@ elif page == "Simulator":
                     st.markdown("---")
                     st.markdown(f"""
                     <div style="display: flex; justify-content: space-between; font-size: 0.9em; color: #555;">
+                        <span>Receive (Approx)</span>
+                        <span style="font-weight: 500;">{'€' if from_token == 'USD' else '$'}{amount_out_disp:,.2f}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.9em; color: #555;">
                         <span>Price</span>
                         <span>1 USD = €{effective_rate:,.4f} EUR</span>
                     </div>
