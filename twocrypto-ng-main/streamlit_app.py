@@ -6,7 +6,6 @@ import requests
 import time
 from datetime import datetime
 from decimal import Decimal
-from streamlit_autorefresh import st_autorefresh
 
 # Add tests/utils directory to path to allow importing simulator
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -55,16 +54,11 @@ def fetch_eur_price():
             # Rate is EUR per 1 USD. e.g. 0.95
             return data["rates"]["EUR"], current_ts
         else:
-            # If API fails, return None but cache failure briefly? No, st.error handles it.
             return None, current_ts
     except Exception as e:
         return None, time.time()
 
 st.set_page_config(page_title="Stablecoin DEX Simulator", layout="wide")
-
-# Auto-refresh the page every 60 seconds to fetch new rates if needed
-# (Only works if user keeps tab open)
-st_autorefresh(interval=60000, limit=None, key="fx_refresh")
 
 # Custom CSS for the card look and input styling
 st.markdown("""
@@ -165,28 +159,32 @@ elif page == "Simulator":
     st.title("💱 Twocrypto-ng Simulator: USD/EUR")
     st.markdown("Simulate a decentralized exchange liquidity pool between **EUR** (Euro) and **USD** (US Dollar).")
 
-    # Fetch Live Rate
-    live_rate, fetched_ts = fetch_eur_price()
-    
-    if live_rate:
-        # Calculate Time Metrics
-        last_updated_str = datetime.fromtimestamp(fetched_ts).strftime('%H:%M:%S')
+    # Fetch Live Rate (for Sidebar Defaults)
+    global_live_rate, global_fetched_ts = fetch_eur_price()
+
+    # --- Live FX Widget Fragment ---
+    @st.fragment(run_every=1)
+    def show_live_rate_widget():
+        # Fetches from cache (hits API only if TTL expired)
+        live_rate, fetched_ts = fetch_eur_price()
         
-        # Calculate time left (Cache expires in 60s)
-        now = time.time()
-        elapsed = now - fetched_ts
-        time_left = max(0, 60 - int(elapsed))
-        
-        st.info(f"""
-        **🟢 Live FX Rate Connected**
-        
-        **Rate:** 1 USD = €{live_rate:.4f} EUR
-        **Last Updated:** {last_updated_str}
-        **Next Update in:** {time_left} seconds
-        """)
-    else:
-        st.warning("🔴 Live FX Rate Unavailable. Using fallback default (0.95).")
-        live_rate = 0.95
+        if live_rate:
+            last_updated_str = datetime.fromtimestamp(fetched_ts).strftime('%H:%M:%S')
+            now = time.time()
+            elapsed = now - fetched_ts
+            time_left = max(0, int(60 - elapsed))
+            
+            st.info(f"""
+            **🟢 Live FX Rate Connected**
+            
+            **Rate:** 1 USD = €{live_rate:.4f} EUR
+            **Last Updated:** {last_updated_str}
+            **Next Update in:** {time_left} seconds
+            """)
+        else:
+            st.warning("🔴 Live FX Rate Unavailable. Using fallback default (0.95).")
+
+    show_live_rate_widget()
 
     # --- Sidebar: Configuration ---
     st.sidebar.header("1. Pool Configuration")
@@ -198,7 +196,7 @@ elif page == "Simulator":
     default_out_fee = 0.0045 # 0.45%
 
     # Initial defaults
-    default_peg = live_rate # 1 USD = ~0.95 EUR
+    default_peg = global_live_rate if global_live_rate else 0.95
     default_liquidity = 1000000 # 1 Million USD total
 
     # Inputs
@@ -210,24 +208,10 @@ elif page == "Simulator":
 
     st.sidebar.subheader("Market Parameters")
     # We use 1 USD = X EUR.
-    # If price_peg = 0.95, then 1 USD buys 0.95 EUR.
-    # Curve Logic: Coin 0 = Base, Coin 1 = Quote.
-    # If we set Coin 0 = EUR, Coin 1 = USD.
-    # Price of Coin 1 (USD) in terms of Coin 0 (EUR).
-    # So if p = 0.95, then 1 USD = 0.95 EUR.
     price_peg = st.sidebar.number_input("Initial Price (EUR per USD)", value=default_peg, format="%.4f")
     liquidity_usd = st.sidebar.number_input("Total Liquidity ($ Value)", value=default_liquidity)
 
     if st.sidebar.button("Initialize / Reset Pool", type="primary"):
-        # Coin 0 = EUR (Base, price=1 relative to itself)
-        # Coin 1 = USD (Price = 0.95 relative to EUR)
-        # D (Invariant) is calculated in EUR units usually, but let's approximate.
-        # If total liquidity is $1M USD worth.
-        # That is $500k USD + $500k worth of EUR.
-        # $500k USD = 500,000 units.
-        # $500k worth of EUR = 500,000 * 0.95 = 475,000 units.
-        # Roughly D ~ Total Value in Coin 0 units.
-        
         D_base = int(liquidity_usd * price_peg * 10**18) # Rough approximation for init
         p0 = [10**18, int(price_peg * 10**18)]
         
