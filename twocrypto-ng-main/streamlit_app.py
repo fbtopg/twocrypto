@@ -498,7 +498,7 @@ elif page == "Simulator":
                     else: # In EUR, Out USD
                         effective_rate = amount_in_disp / amount_out_disp # EUR per USD (normalized)
                     
-                    oracle_rate = float(current_price_eur)
+                    oracle_rate = float(current_oracle_price_eur)
                     expected_out_oracle = 0
                     price_impact_pct = 0.0
                     
