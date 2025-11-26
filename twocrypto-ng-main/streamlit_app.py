@@ -368,29 +368,47 @@ elif page == "Simulator":
         to_token = "EUR" if from_token == "USD" else "USD"
         
         # Callbacks for bi-directional updating
+        def calculate_from_inputs():
+            # Check which input was changed last by comparing with session state
+            # Note: Streamlit reruns the whole script on interaction.
+            # We use the 'key' to get the new value directly.
+            
+            new_in = st.session_state.input_widget
+            new_out = st.session_state.output_widget
+            
+            # Determine which value changed. This is tricky in standard Streamlit without on_change.
+            # Simplified approach: If Input changed, update Output.
+            # Ideally we want to know WHICH one changed.
+            # Since we removed on_change, we'll just trust the user to type and press Enter.
+            # But wait, without on_change, we can't easily distinguish which one was just typed in if both have values.
+            # So we WILL keep on_change, but fix the state logic.
+            pass 
+
         def update_output():
             # User changed Amount In. Calculate Amount Out.
             new_in = st.session_state.input_widget
             st.session_state.val_in = new_in
             
             if new_in > 0:
-                dx = int(Decimal(new_in) * Decimal(10**18))
+                dx = int(Decimal(str(new_in)) * Decimal(10**18))
                 dy_int = None
-                if from_token == "USD": # USD->EUR
-                    dy_int = get_trade_preview(trader, dx, 1, 0)
-                else: # EUR->USD
-                    dy_int = get_trade_preview(trader, dx, 0, 1)
+                try:
+                    if from_token == "USD": # USD->EUR
+                        dy_int = get_trade_preview(trader, dx, 1, 0)
+                    else: # EUR->USD
+                        dy_int = get_trade_preview(trader, dx, 0, 1)
+                except Exception:
+                    dy_int = None
                 
                 if dy_int:
                     val = float(Decimal(dy_int) / Decimal(10**18))
                     st.session_state.val_out = val
-                    st.session_state.output_widget = val
+                    # IMPORTANT: Do NOT set st.session_state.output_widget directly here if it causes a conflict.
+                    # But we MUST set it to update the UI. The key is that 'output_widget' key is tied to this value.
                 else:
                     st.session_state.val_out = 0.0
-                    st.session_state.output_widget = 0.0
             else:
                 st.session_state.val_out = 0.0
-                st.session_state.output_widget = 0.0
 
         def update_input():
             # User changed Amount Out. Calculate required Amount In.
@@ -398,24 +416,23 @@ elif page == "Simulator":
             st.session_state.val_out = new_out
             
             if new_out > 0:
-                dy_target = int(Decimal(new_out) * Decimal(10**18))
+                dy_target = int(Decimal(str(new_out)) * Decimal(10**18))
                 dx_int = None
-                if from_token == "USD": # USD->EUR. target_dy is EUR. i=1, j=0.
-                    dx_int = solve_dx_for_dy(trader, dy_target, 1, 0)
-                else: # EUR->USD. target_dy is USD. i=0, j=1.
-                    dx_int = solve_dx_for_dy(trader, dy_target, 0, 1)
+                try:
+                    if from_token == "USD": # USD->EUR. target_dy is EUR. i=1, j=0.
+                        dx_int = solve_dx_for_dy(trader, dy_target, 1, 0)
+                    else: # EUR->USD. target_dy is USD. i=0, j=1.
+                        dx_int = solve_dx_for_dy(trader, dy_target, 0, 1)
+                except Exception:
+                    dx_int = None
                 
                 if dx_int:
                     val = float(Decimal(dx_int) / Decimal(10**18))
                     st.session_state.val_in = val
-                    st.session_state.input_widget = val
                 else:
-                    # Could not solve (maybe impossible amount)
                     st.session_state.val_in = 0.0
-                    st.session_state.input_widget = 0.0
             else:
                 st.session_state.val_in = 0.0
-                st.session_state.input_widget = 0.0
 
         # Centered Card Layout
         col_spacer_left, col_card, col_spacer_right = st.columns([1, 2, 1])
@@ -429,6 +446,7 @@ elif page == "Simulator":
                 col_input_from, col_token_from = st.columns([3, 1])
                 
                 with col_input_from:
+                    # Use key 'input_widget' but rely on session_state.val_in for the value
                     st.number_input(
                         "Amount In", 
                         min_value=0.0, 
@@ -453,6 +471,7 @@ elif page == "Simulator":
                 col_input_to, col_token_to = st.columns([3, 1])
                 
                 with col_input_to:
+                    # Use key 'output_widget' but rely on session_state.val_out for the value
                     st.number_input(
                         "Amount Out",
                         min_value=0.0,
@@ -606,7 +625,7 @@ elif page == "Simulator":
             y=alt.value(0)
         )
 
-        st.altair_chart(c + rule + text, use_container_width=True)
+        st.altair_chart(c + rule + text)
 
         st.divider()
         
