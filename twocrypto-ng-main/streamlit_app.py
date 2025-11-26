@@ -674,7 +674,7 @@ elif page == "Simulator":
                 df = pd.DataFrame(st.session_state.price_history)
                 # Plot simple line chart
                 st.line_chart(df, x="time", y=["Oracle Price", "Spot Price"], color=["#FF4B4B", "#1C83E1"])
-        else:
+            else:
                 st.info("Perform swaps or simulate time to see the price chart.")
 
 # History
