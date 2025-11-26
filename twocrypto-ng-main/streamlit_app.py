@@ -265,40 +265,40 @@ default_gamma = 1000000000000000 # 10^15 (0.001)
 default_mid_fee = 0.0005 # 0.05%
 default_out_fee = 0.0045 # 0.45%
 
-# Initial defaults
+    # Initial defaults
     default_peg = global_live_rate if global_live_rate else 0.95
-default_liquidity = 1000000 # 1 Million USD total
+    default_liquidity = 1000000 # 1 Million USD total
 
 # Inputs
-with st.sidebar.expander("Advanced Parameters", expanded=False):
-    A = st.number_input("Amplification (A)", value=default_A)
-    gamma = st.number_input("Gamma (int)", value=default_gamma, help="Gamma parameter in 10^18 scale (e.g. 10^15 = 0.001)")
-    mid_fee = st.number_input("Mid Fee", value=default_mid_fee, format="%.6f")
-    out_fee = st.number_input("Out Fee", value=default_out_fee, format="%.6f")
+    with st.sidebar.expander("Advanced Parameters", expanded=False):
+        A = st.number_input("Amplification (A)", value=default_A)
+        gamma = st.number_input("Gamma (int)", value=default_gamma, help="Gamma parameter in 10^18 scale (e.g. 10^15 = 0.001)")
+        mid_fee = st.number_input("Mid Fee", value=default_mid_fee, format="%.6f")
+        out_fee = st.number_input("Out Fee", value=default_out_fee, format="%.6f")
 
-st.sidebar.subheader("Market Parameters")
+    st.sidebar.subheader("Market Parameters")
     # We use 1 USD = X EUR.
     price_peg = st.sidebar.number_input("Initial Price (EUR per USD)", value=default_peg, format="%.4f")
-liquidity_usd = st.sidebar.number_input("Total Liquidity ($ Value)", value=default_liquidity)
+    liquidity_usd = st.sidebar.number_input("Total Liquidity ($ Value)", value=default_liquidity)
 
-if st.sidebar.button("Initialize / Reset Pool", type="primary"):
+    if st.sidebar.button("Initialize / Reset Pool", type="primary"):
         D_base = int(liquidity_usd * price_peg * 10**18) # Rough approximation for init
-    p0 = [10**18, int(price_peg * 10**18)]
-    
-    try:
-        trader = Trader(
-            A=int(A),
-            gamma=int(gamma),
+        p0 = [10**18, int(price_peg * 10**18)]
+        
+        try:
+            trader = Trader(
+                A=int(A),
+                gamma=int(gamma),
                 D=D_base,
-            p0=p0,
-            mid_fee=mid_fee,
-            out_fee=out_fee
-        )
+                p0=p0,
+                mid_fee=mid_fee,
+                out_fee=out_fee
+            )
             
             # Initialize or reset session state
-        st.session_state.trader = trader
-        st.session_state.log = []
-        st.session_state.initialized = True
+            st.session_state.trader = trader
+            st.session_state.log = []
+            st.session_state.initialized = True
             st.session_state.swap_from_token = "USD"
             
             # Tracking for Repagging
@@ -308,22 +308,22 @@ if st.sidebar.button("Initialize / Reset Pool", type="primary"):
             # Initial tweak to set ma recorder state
             trader.tweak_price(0)
             
-        st.rerun()
-    except Exception as e:
-        st.error(f"Failed to initialize pool: {e}")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Failed to initialize pool: {e}")
 
-# --- Main Interface ---
+    # --- Main Interface ---
 
-if 'trader' not in st.session_state:
-    st.info("👈 Please configure and initialize the pool in the sidebar to start.")
+    if 'trader' not in st.session_state:
+        st.info("👈 Please configure and initialize the pool in the sidebar to start.")
     else:
-trader = st.session_state.trader
+        trader = st.session_state.trader
 
         # Calculate Balances & Price
         # Coin 0 = EUR, Coin 1 = USD
         bal_eur = Decimal(trader.curve.x[0]) / Decimal(10**18)
-bal_usd = Decimal(trader.curve.x[1]) / Decimal(10**18)
-
+        bal_usd = Decimal(trader.curve.x[1]) / Decimal(10**18)
+        
         # Price of Coin 1 (USD) in terms of Coin 0 (EUR)
         # Oracle Price
         current_oracle_price_eur = Decimal(trader.price_oracle[1]) / Decimal(10**18)
@@ -332,14 +332,14 @@ bal_usd = Decimal(trader.curve.x[1]) / Decimal(10**18)
         # get_p returns price of coin 1 in terms of coin 0
         current_spot_price_eur = Decimal(trader.curve.get_p()) / Decimal(10**18)
 
-# Display Metrics
-st.subheader("Pool Status")
-m1, m2, m3 = st.columns(3)
+        # Display Metrics
+        st.subheader("Pool Status")
+        m1, m2, m3 = st.columns(3)
         m1.metric("Pool EUR Liquidity", f"€{bal_eur:,.2f}")
-m2.metric("Pool USD Liquidity", f"${bal_usd:,.2f}")
+        m2.metric("Pool USD Liquidity", f"${bal_usd:,.2f}")
         m3.metric("Oracle Price (EUR/USD)", f"€{current_oracle_price_eur:,.4f}")
 
-st.divider()
+        st.divider()
 
         # --- Unified Swap Interface ---
         st.subheader("💱 Swap")
@@ -552,8 +552,8 @@ st.divider()
                         # Reset inputs
                         st.session_state.val_in = 0.0
                         st.session_state.val_out = 0.0
-            st.rerun()
-        else:
+                        st.rerun()
+                    else:
                         st.error("Swap Failed (Execution error)")
 
         st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
