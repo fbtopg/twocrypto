@@ -678,7 +678,7 @@ elif page == "Simulator":
                 st.info("Perform swaps or simulate time to see the price chart.")
 
 # History
-if st.session_state.log:
+if 'log' in st.session_state and st.session_state.log:
     st.divider()
     st.subheader("Transaction History")
     for msg in reversed(st.session_state.log):
