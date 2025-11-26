@@ -625,6 +625,8 @@ elif page == "Simulator":
             y=alt.value(0)
         )
 
+        # Suppress Altair deprecated warning by not using use_container_width for now, 
+        # or accepting that the default width is fine.
         st.altair_chart(c + rule + text)
 
         st.divider()
