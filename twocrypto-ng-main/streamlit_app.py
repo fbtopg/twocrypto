@@ -269,7 +269,7 @@ default_out_fee = 0.0045 # 0.45%
     default_peg = global_live_rate if global_live_rate else 0.95
     default_liquidity = 1000000 # 1 Million USD total
 
-# Inputs
+    # Inputs
     with st.sidebar.expander("Advanced Parameters", expanded=False):
         A = st.number_input("Amplification (A)", value=default_A)
         gamma = st.number_input("Gamma (int)", value=default_gamma, help="Gamma parameter in 10^18 scale (e.g. 10^15 = 0.001)")
