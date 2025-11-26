@@ -561,7 +561,7 @@ elif page == "Simulator":
         
         # Generate Data for Graph
         # Center around Oracle Price
-        p_oracle = float(current_price_eur) 
+        p_oracle = float(current_oracle_price_eur) 
         p_spot = float(Decimal(trader.curve.get_p()) / Decimal(10**18))
         
         # Gamma defines width. 

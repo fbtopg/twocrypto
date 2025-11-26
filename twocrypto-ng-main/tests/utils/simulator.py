@@ -253,6 +253,7 @@ class Trader:
         self.adjustment_step = int(10**18 * adjustment_step)
         self.fee_gamma = fee_gamma or gamma  # why can gamma be used as fee_gamma?
         self.ma_time = ma_time
+        self.t = 0
 
     def fee(self):
         f = reduction_coefficient(self.curve.xp(), self.fee_gamma)
