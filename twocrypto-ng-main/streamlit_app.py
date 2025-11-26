@@ -403,12 +403,13 @@ elif page == "Simulator":
                 if dy_int:
                     val = float(Decimal(dy_int) / Decimal(10**18))
                     st.session_state.val_out = val
-                    # IMPORTANT: Do NOT set st.session_state.output_widget directly here if it causes a conflict.
-                    # But we MUST set it to update the UI. The key is that 'output_widget' key is tied to this value.
+                    st.session_state.output_widget = val # Update the widget key!
                 else:
                     st.session_state.val_out = 0.0
+                    st.session_state.output_widget = 0.0
             else:
                 st.session_state.val_out = 0.0
+                st.session_state.output_widget = 0.0
 
         def update_input():
             # User changed Amount Out. Calculate required Amount In.
@@ -429,10 +430,13 @@ elif page == "Simulator":
                 if dx_int:
                     val = float(Decimal(dx_int) / Decimal(10**18))
                     st.session_state.val_in = val
+                    st.session_state.input_widget = val # Update the widget key!
                 else:
                     st.session_state.val_in = 0.0
+                    st.session_state.input_widget = 0.0
             else:
                 st.session_state.val_in = 0.0
+                st.session_state.input_widget = 0.0
 
         # Centered Card Layout
         col_spacer_left, col_card, col_spacer_right = st.columns([1, 2, 1])
