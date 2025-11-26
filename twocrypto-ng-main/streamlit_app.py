@@ -233,7 +233,7 @@ elif page == "Simulator":
     global_live_rate, global_fetched_ts = fetch_eur_price()
 
     # --- Live FX Widget Fragment ---
-    @st.fragment
+    # Removed @st.fragment to ensure stability and prevent rendering loops
     def show_live_rate_widget():
         # Fetches from cache (hits API only if TTL expired)
         live_rate, fetched_ts = fetch_eur_price()
@@ -252,9 +252,7 @@ elif page == "Simulator":
             **Next Update in:** {time_left} seconds
             """)
             
-            if time_left > 0:
-                time.sleep(1)
-                st.rerun()
+            # Removed automatic sleep/rerun loop to prevent UI blocking
         else:
             st.warning("🔴 Live FX Rate Unavailable. Using fallback default (0.95).")
 
