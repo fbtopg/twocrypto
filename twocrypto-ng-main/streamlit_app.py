@@ -256,14 +256,14 @@ elif page == "Simulator":
 
     show_live_rate_widget()
 
-# --- Sidebar: Configuration ---
-st.sidebar.header("1. Pool Configuration")
+    # --- Sidebar: Configuration ---
+    st.sidebar.header("1. Pool Configuration")
 
-# Defaults based on 'forex' preset in pool_presets.csv
-default_A = 20000000
-default_gamma = 1000000000000000 # 10^15 (0.001)
-default_mid_fee = 0.0005 # 0.05%
-default_out_fee = 0.0045 # 0.45%
+    # Defaults based on 'forex' preset in pool_presets.csv
+    default_A = 20000000
+    default_gamma = 1000000000000000 # 10^15 (0.001)
+    default_mid_fee = 0.0005 # 0.05%
+    default_out_fee = 0.0045 # 0.45%
 
     # Initial defaults
     default_peg = global_live_rate if global_live_rate else 0.95
